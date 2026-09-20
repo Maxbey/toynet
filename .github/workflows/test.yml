@@ -16,4 +16,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            benchmarks/go.sum
       - run: go test ./...
+      - run: go test ./...
+        working-directory: benchmarks

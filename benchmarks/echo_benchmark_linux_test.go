@@ -1,6 +1,6 @@
 //go:build linux
 
-package toynet
+package benchmarks
 
 import (
 	"bytes"
@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Maxbey/toynet"
 	"github.com/panjf2000/gnet/v2"
-	"golang.org/x/sys/unix"
 )
 
 const echoBenchmarkTimeout = 5 * time.Minute
@@ -27,6 +27,19 @@ func (benchmarkDiscardLogger) Infof(string, ...any)  {}
 func (benchmarkDiscardLogger) Warnf(string, ...any)  {}
 func (benchmarkDiscardLogger) Errorf(string, ...any) {}
 func (benchmarkDiscardLogger) Fatalf(string, ...any) {}
+
+type toynetEchoBenchmarkHandler struct{}
+
+func (toynetEchoBenchmarkHandler) OnReadable(c toynet.Connection) error {
+	input, err := c.PeekAll()
+	if err != nil || len(input) == 0 {
+		return err
+	}
+	if err := c.Write(input); err != nil {
+		return err
+	}
+	return c.Ack(len(input))
+}
 
 type gnetEchoBenchmarkHandler struct {
 	gnet.BuiltinEventEngine
@@ -250,19 +263,17 @@ func dialEchoBenchmark(tb testing.TB, address string, done <-chan error) net.Con
 func startToynetEchoBenchmark(tb testing.TB) (net.Conn, func()) {
 	tb.Helper()
 	address, port := reserveEchoBenchmarkAddress(tb)
-	s, err := newServer(Config{
-		Host:           "127.0.0.1",
-		Port:           port,
-		Protocol:       TCP,
-		MaxConnections: 256,
-		MaxBuffer:      4 << 20,
-	}, echoTestHandler{})
-	if err != nil {
-		tb.Fatal(err)
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx) }()
+	go func() {
+		done <- toynet.Run(ctx, toynet.Config{
+			Host:           "127.0.0.1",
+			Port:           port,
+			Protocol:       toynet.TCP,
+			MaxConnections: 256,
+			MaxBuffer:      4 << 20,
+		}, toynetEchoBenchmarkHandler{})
+	}()
 	client := dialEchoBenchmark(tb, address, done)
 
 	return client, func() {
@@ -275,12 +286,6 @@ func startToynetEchoBenchmark(tb testing.TB) (net.Conn, func()) {
 			}
 		case <-time.After(2 * time.Second):
 			tb.Error("toynet benchmark server did not stop")
-			return
-		}
-		for fd, reg := range s.connections {
-			_ = unix.Close(fd)
-			reg.conn.state.close()
-			delete(s.connections, fd)
 		}
 	}
 }

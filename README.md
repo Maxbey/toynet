@@ -57,5 +57,6 @@ go test ./...
 Run the echo benchmarks:
 
 ```sh
+cd benchmarks
 go test -run '^$' -bench '^BenchmarkEchoRoundTrip' -benchmem
 ```
