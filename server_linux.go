@@ -350,61 +350,42 @@ func (c *linuxConnection) Write(b []byte) error {
 }
 
 func socketRead(fd int, b []byte) (int, error) {
-	var (
-		n   int
-		err error
-	)
-	calls := 0
-	received := 0
-
-	for received < len(b) {
-		n, err = unix.Read(fd, b[received:])
-		calls += 1
-		if n > 0 {
-			received += n
-		}
-
-		if isInterrupt(err) {
-			break
-		}
-		if err != nil {
-			return received, err
-		}
-
-		if n == 0 {
-			return received, io.EOF
-		}
+	n, err := unix.Read(fd, b)
+	if n < 0 {
+		n = 0
 	}
 
-	return received, nil
+	if isInterrupt(err) {
+		return n, nil
+	}
+	if err != nil {
+		return n, err
+	}
+
+	if n == 0 {
+		return 0, io.EOF
+	}
+
+	return n, nil
 }
 
 func socketWrite(fd int, b []byte) (int, error) {
-	var (
-		n   int
-		err error
-	)
-	calls := 0
-	written := 0
-
-	for len(b) > 0 {
-		n, err = unix.Write(fd, b)
-		calls += 1
-		if n > 0 {
-			written += n
-			b = b[n:]
-		}
-
-		if isInterrupt(err) || n == 0 {
-			break
-		}
-
-		if err != nil {
-			return written, err
-		}
+	n, err := unix.Write(fd, b)
+	if n < 0 {
+		n = 0
 	}
 
-	return written, nil
+	if isInterrupt(err) {
+		return n, nil
+	}
+	if err != nil {
+		return n, err
+	}
+	if n == 0 {
+		return 0, nil
+	}
+
+	return n, nil
 }
 
 func isInterrupt(err error) bool {
