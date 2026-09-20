@@ -4,6 +4,7 @@ package toynet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -53,21 +54,31 @@ func TestServerEcho(t *testing.T) {
 	var client net.Conn
 	t.Cleanup(func() {
 		cancel()
+		var cleanupErr error
 		if client != nil {
-			defer client.Close()
+			if err := client.Close(); err != nil {
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("closing echo client: %w", err))
+			}
 		}
 		select {
 		case <-done:
 			// Temporary test cleanup until the server owns connection shutdown.
 			for fd, c := range s.connections {
-				_ = unix.Close(fd)
-				c.conn.state.close()
+				if err := unix.Close(fd); err != nil {
+					cleanupErr = errors.Join(cleanupErr, fmt.Errorf("closing server socket %d: %w", fd, err))
+				}
+				if err := c.conn.state.close(); err != nil {
+					cleanupErr = errors.Join(cleanupErr, fmt.Errorf("releasing server connection %d: %w", fd, err))
+				}
 			}
 			if runErr != nil {
-				t.Errorf("server stopped with an error: %v", runErr)
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("server stopped: %w", runErr))
 			}
 		case <-time.After(2 * time.Second):
-			t.Error("server did not stop after cancellation")
+			cleanupErr = errors.Join(cleanupErr, errors.New("server did not stop after cancellation"))
+		}
+		if cleanupErr != nil {
+			t.Fatal(cleanupErr)
 		}
 	})
 

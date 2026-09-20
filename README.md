@@ -1,5 +1,7 @@
 # toynet
 
+[![CI](https://github.com/Maxbey/toynet/actions/workflows/ci.yml/badge.svg)](https://github.com/Maxbey/toynet/actions/workflows/ci.yml)
+
 `toynet` is a toy, Linux-only TCP networking library written in Go. It uses epoll, nonblocking sockets, pooled ring buffers, and connection-scoped `Peek`/`Ack` input handling.
 
 ## Example

@@ -5,6 +5,7 @@ package toynet
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -17,8 +18,15 @@ func invariantSocketPair(t *testing.T) (int, int) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = unix.Close(fds[0])
-		_ = unix.Close(fds[1])
+		var closeErr error
+		for _, fd := range fds {
+			if err := unix.Close(fd); err != nil {
+				closeErr = errors.Join(closeErr, fmt.Errorf("closing socket %d: %w", fd, err))
+			}
+		}
+		if closeErr != nil {
+			t.Fatal(closeErr)
+		}
 	})
 	return fds[0], fds[1]
 }
@@ -76,7 +84,11 @@ func TestWriteConnPreservesOutputUnderBackpressure(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := newLinuxConnection(writer, make([]byte, 64<<10), pool)
-	t.Cleanup(c.state.close)
+	t.Cleanup(func() {
+		if err := c.state.close(); err != nil {
+			t.Fatalf("releasing connection buffers: %v", err)
+		}
+	})
 	// Rotate a full ring so flushing must traverse both readable segments.
 	payload := make([]byte, 128<<10)
 	for i := range payload {
@@ -135,7 +147,11 @@ func TestLinuxConnectionWriteKeepsQueuedOutputFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := newLinuxConnection(writer, make([]byte, 64), pool)
-	t.Cleanup(c.state.close)
+	t.Cleanup(func() {
+		if err := c.state.close(); err != nil {
+			t.Fatalf("releasing connection buffers: %v", err)
+		}
+	})
 	if err := c.state.outputBuf.Write([]byte("older-")); err != nil {
 		t.Fatal(err)
 	}
@@ -160,8 +176,16 @@ func TestInputLeftoversSurviveSharedScratchReuse(t *testing.T) {
 	view := make([]byte, 64)
 	first := newConnection(view, pool)
 	second := newConnection(view, pool)
-	t.Cleanup(first.close)
-	t.Cleanup(second.close)
+	t.Cleanup(func() {
+		if err := first.close(); err != nil {
+			t.Fatalf("releasing first connection buffers: %v", err)
+		}
+	})
+	t.Cleanup(func() {
+		if err := second.close(); err != nil {
+			t.Fatalf("releasing second connection buffers: %v", err)
+		}
+	})
 	copy(shared, "donepartial")
 	first.setInputScratch(shared[:11])
 	if err := first.Ack(4); err != nil {
