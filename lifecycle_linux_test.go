@@ -127,7 +127,7 @@ func assertLifecycleClosed(t *testing.T, s *server, c *linuxConnection) {
 	}
 }
 
-func TestSocketReadReportsDataAlongsideEOF(t *testing.T) {
+func TestSocketReadReportsDataBeforeEOF(t *testing.T) {
 	reader, writer := invariantSocketPair(t)
 	if _, err := unix.Write(writer, []byte("final request")); err != nil {
 		t.Fatal(err)
@@ -137,11 +137,19 @@ func TestSocketReadReportsDataAlongsideEOF(t *testing.T) {
 	}
 	buf := make([]byte, 64)
 	n, err := socketRead(reader, buf)
-	if !errors.Is(err, io.EOF) {
-		t.Fatalf("want EOF, got %v", err)
+	if err != nil {
+		t.Fatalf("reading final request: %v", err)
 	}
 	if got := string(buf[:n]); got != "final request" {
-		t.Errorf("want final request with EOF, got %q (n=%d)", got, n)
+		t.Errorf("want final request, got %q (n=%d)", got, n)
+	}
+
+	n, err = socketRead(reader, buf)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("want EOF after final request, got n=%d err=%v", n, err)
+	}
+	if n != 0 {
+		t.Fatalf("want no bytes with EOF, got %d", n)
 	}
 }
 
