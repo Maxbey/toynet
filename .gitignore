@@ -1,0 +1,14 @@
+# Go build and test output
+*.test
+*.out
+*.prof
+coverage.out
+
+# Local binaries
+/toynet
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+*~
