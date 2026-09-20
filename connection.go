@@ -16,8 +16,8 @@ func newConnection(viewScratch []byte, pool *memoryPool) *connection {
 		viewScratch: viewScratch,
 
 		pool:      pool,
-		inputBuf:  NewBuffer(pool),
-		outputBuf: NewBuffer(pool),
+		inputBuf:  newRingBuffer(pool),
+		outputBuf: newRingBuffer(pool),
 	}
 }
 

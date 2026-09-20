@@ -12,7 +12,7 @@ type buffer struct {
 	writeOffset int
 }
 
-func NewBuffer(pool *memoryPool) buffer {
+func newRingBuffer(pool *memoryPool) buffer {
 	return buffer{
 		pool: pool,
 	}

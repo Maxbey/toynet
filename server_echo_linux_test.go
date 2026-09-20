@@ -20,12 +20,7 @@ func (echoTestHandler) OnReadable(c Connection) error {
 	if err != nil || len(input) == 0 {
 		return err
 	}
-	// Write is not yet part of Connection's public interface.
-	w, ok := c.(interface{ Write([]byte) error })
-	if !ok {
-		return fmt.Errorf("connection does not support Write")
-	}
-	if err := w.Write(input); err != nil {
+	if err := c.Write(input); err != nil {
 		return err
 	}
 	return c.Ack(len(input))
