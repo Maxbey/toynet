@@ -5,6 +5,7 @@ package benchmarks
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -106,6 +107,16 @@ func BenchmarkEchoRoundTrip100Connections(b *testing.B) {
 
 type echoBenchmarkStarter func(testing.TB) (net.Conn, func())
 
+func closeBenchmarkClients(clients []net.Conn) error {
+	var closeErr error
+	for _, client := range clients {
+		if err := client.Close(); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("closing benchmark client: %w", err))
+		}
+	}
+	return closeErr
+}
+
 func benchmarkEchoServer(b *testing.B, size int, start echoBenchmarkStarter) {
 	client, stop := start(b)
 	payload := make([]byte, size)
@@ -145,8 +156,8 @@ func benchmarkConcurrentEchoServer(b *testing.B, size, connectionCount int, star
 	for len(clients) < connectionCount {
 		client, err := net.DialTimeout("tcp4", address, 2*time.Second)
 		if err != nil {
-			for _, existing := range clients[1:] {
-				_ = existing.Close()
+			if closeErr := closeBenchmarkClients(clients[1:]); closeErr != nil {
+				err = errors.Join(err, closeErr)
 			}
 			stop()
 			b.Fatalf("opening benchmark connection %d: %v", len(clients)+1, err)
@@ -206,10 +217,11 @@ func benchmarkConcurrentEchoServer(b *testing.B, size, connectionCount int, star
 	b.StopTimer()
 	b.ReportMetric(float64(b.N)/b.Elapsed().Seconds(), "req/s")
 
-	for _, client := range clients[1:] {
-		_ = client.Close()
-	}
+	closeErr := closeBenchmarkClients(clients[1:])
 	stop()
+	if closeErr != nil {
+		b.Fatal(closeErr)
+	}
 	select {
 	case err := <-errorsFound:
 		b.Fatal(err)
@@ -277,15 +289,21 @@ func startToynetEchoBenchmark(tb testing.TB) (net.Conn, func()) {
 	client := dialEchoBenchmark(tb, address, done)
 
 	return client, func() {
-		_ = client.Close()
+		var stopErr error
+		if err := client.Close(); err != nil {
+			stopErr = errors.Join(stopErr, fmt.Errorf("closing toynet benchmark client: %w", err))
+		}
 		cancel()
 		select {
 		case err := <-done:
 			if err != nil {
-				tb.Errorf("stopping toynet benchmark server: %v", err)
+				stopErr = errors.Join(stopErr, fmt.Errorf("stopping toynet benchmark server: %w", err))
 			}
 		case <-time.After(2 * time.Second):
-			tb.Error("toynet benchmark server did not stop")
+			stopErr = errors.Join(stopErr, errors.New("toynet benchmark server did not stop"))
+		}
+		if stopErr != nil {
+			tb.Fatal(stopErr)
 		}
 	}
 }
@@ -316,19 +334,25 @@ func startGnetEchoBenchmark(tb testing.TB) (net.Conn, func()) {
 	client := dialEchoBenchmark(tb, address, done)
 
 	return client, func() {
-		_ = client.Close()
+		var stopErr error
+		if err := client.Close(); err != nil {
+			stopErr = errors.Join(stopErr, fmt.Errorf("closing gnet benchmark client: %w", err))
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		if err := engine.Stop(ctx); err != nil {
-			tb.Errorf("stopping gnet benchmark server: %v", err)
+			stopErr = errors.Join(stopErr, fmt.Errorf("stopping gnet benchmark server: %w", err))
 		}
 		select {
 		case err := <-done:
 			if err != nil {
-				tb.Errorf("gnet benchmark server: %v", err)
+				stopErr = errors.Join(stopErr, fmt.Errorf("gnet benchmark server: %w", err))
 			}
 		case <-time.After(2 * time.Second):
-			tb.Error("gnet benchmark server did not stop")
+			stopErr = errors.Join(stopErr, errors.New("gnet benchmark server did not stop"))
+		}
+		if stopErr != nil {
+			tb.Fatal(stopErr)
 		}
 	}
 }

@@ -50,12 +50,16 @@ func (s *server) Run(ctx context.Context) error {
 	return s.run(ctx)
 }
 
-func (s *server) run(ctx context.Context) error {
+func (s *server) run(ctx context.Context) (err error) {
 	sfd, err := s.bindSocket(s.cfg.Protocol)
 	if err != nil {
 		return fmt.Errorf("binding a socket: %w", err)
 	}
-	defer unix.Close(sfd)
+	defer func() {
+		if closeErr := unix.Close(sfd); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("closing listener: %w", closeErr))
+		}
+	}()
 
 	if err := unix.Listen(sfd, s.cfg.MaxConnections); err != nil {
 		return fmt.Errorf("listening on socket: %w", err)
@@ -64,7 +68,11 @@ func (s *server) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer poller.close()
+	defer func() {
+		if closeErr := poller.close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("closing epoll: %w", closeErr))
+		}
+	}()
 
 	if err := poller.add(sfd, unix.EPOLLIN); err != nil {
 		return fmt.Errorf("registering listener with epoll: %w", err)
@@ -193,12 +201,16 @@ func (s *server) readConn(conn *linuxConnection, inputScratch []byte) error {
 }
 
 func (s *server) closeConn(conn *linuxConnection, poll epoll) {
-	unix.Close(conn.fd)
-
-	conn.state.close()
+	if err := poll.remove(conn.fd); err != nil {
+		slog.Warn("failure removing connection from epoll", "fd", conn.fd, "err", err)
+	}
+	if err := unix.Close(conn.fd); err != nil {
+		slog.Warn("failure closing connection socket", "fd", conn.fd, "err", err)
+	}
+	if err := conn.state.close(); err != nil {
+		slog.Warn("failure releasing connection buffers", "fd", conn.fd, "err", err)
+	}
 	delete(s.connections, conn.fd)
-
-	poll.remove(conn.fd)
 }
 
 func (s *server) acceptConnection(poll epoll, sfd int, viewScratch []byte, budget int) error {
@@ -222,7 +234,9 @@ func (s *server) acceptConnection(poll epoll, sfd int, viewScratch []byte, budge
 		}
 
 		if err := poll.add(fd, unix.EPOLLIN); err != nil {
-			unix.Close(fd)
+			if closeErr := unix.Close(fd); closeErr != nil {
+				return errors.Join(err, fmt.Errorf("closing unregistered connection: %w", closeErr))
+			}
 			return err
 		}
 
@@ -246,8 +260,10 @@ func (s *server) bindSocket(protocol Protocol) (fd int, err error) {
 		0,
 	)
 	defer func() {
-		if err != nil {
-			unix.Close(fd)
+		if err != nil && fd >= 0 {
+			if closeErr := unix.Close(fd); closeErr != nil {
+				err = errors.Join(err, fmt.Errorf("closing socket after bind failure: %w", closeErr))
+			}
 		}
 	}()
 	if err != nil {

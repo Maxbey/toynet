@@ -1,6 +1,9 @@
 package toynet
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 type connection struct {
 	inputScratch []byte
@@ -107,7 +110,6 @@ func (c *connection) setInputScratch(b []byte) {
 	c.inputScratch = b
 }
 
-func (c *connection) close() {
-	c.inputBuf.Free()
-	c.outputBuf.Free()
+func (c *connection) close() error {
+	return errors.Join(c.inputBuf.Free(), c.outputBuf.Free())
 }

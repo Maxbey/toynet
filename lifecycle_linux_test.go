@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -29,7 +30,11 @@ func lifecycleFixture(t *testing.T, h Handler) (*server, epoll, *linuxConnection
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = p.close() })
+	t.Cleanup(func() {
+		if err := p.close(); err != nil {
+			t.Fatalf("closing epoll: %v", err)
+		}
+	})
 	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_NONBLOCK|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -40,12 +45,22 @@ func lifecycleFixture(t *testing.T, h Handler) (*server, epoll, *linuxConnection
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = unix.Close(fds[1])
+		var cleanupErr error
+		if err := unix.Close(fds[1]); err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("closing peer socket: %w", err))
+		}
 		// Only clean up entries still owned by the server; avoid closing reused fds.
 		for fd, reg := range s.connections {
-			_ = unix.Close(fd)
-			reg.conn.state.close()
+			if err := unix.Close(fd); err != nil {
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("closing server socket %d: %w", fd, err))
+			}
+			if err := reg.conn.state.close(); err != nil {
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("releasing server connection %d: %w", fd, err))
+			}
 			delete(s.connections, fd)
+		}
+		if cleanupErr != nil {
+			t.Fatal(cleanupErr)
 		}
 	})
 	return s, p, c, fds[1]
@@ -195,7 +210,7 @@ func TestLifecycleHandlerErrorClosesConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	stop := runLifecycleLoop(t, s, p)
-	_ = readLifecycleEOF(t, peer)
+	readLifecycleEOF(t, peer)
 	stop()
 	assertLifecycleClosed(t, s, c)
 }
