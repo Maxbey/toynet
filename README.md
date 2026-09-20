@@ -2,8 +2,6 @@
 
 `toynet` is a toy, Linux-only TCP networking library written in Go. It uses epoll, nonblocking sockets, pooled ring buffers, and connection-scoped `Peek`/`Ack` input handling.
 
-The API and implementation are still under active development.
-
 ## Example
 
 ```go
